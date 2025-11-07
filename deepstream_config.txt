@@ -1,0 +1,163 @@
+# ============================================================================
+# DeepStream Pipeline Configuration for Real-Time Vehicle Analytics
+# Target: 20fps video processing with multi-model ensemble
+# ============================================================================
+
+[application]
+enable-perf-measurement=1
+perf-measurement-interval-sec=5
+
+# ============================================================================
+# SOURCE: Video input (file or RTSP stream)
+# ============================================================================
+[source0]
+enable=1
+type=3  # 3=URI, 4=RTSP
+uri=file:///path/to/roundabout_video.mp4
+# For RTSP: uri=rtsp://username:password@ip:port/stream
+num-sources=1
+gpu-id=0
+cudadec-memtype=0  # 0=Device memory for best performance
+
+# ============================================================================
+# STREAMMUX: Batches frames from sources
+# ============================================================================
+[streammux]
+gpu-id=0
+batch-size=1
+batched-push-timeout=40000
+width=1920
+height=1080
+enable-padding=0
+nvbuf-memory-type=0  # 0=Device memory
+
+# ============================================================================
+# PRIMARY GIE: YOLOv10 Vehicle Detector (runs on every frame)
+# ============================================================================
+[primary-gie]
+enable=1
+gpu-id=0
+batch-size=1
+interval=0  # Run on every frame for 20fps processing
+gie-unique-id=1
+config-file=config_pgie_yolov10.txt
+nvbuf-memory-type=0
+
+# ============================================================================
+# TRACKER: ByteTrack for trajectory generation
+# ============================================================================
+[tracker]
+enable=1
+tracker-width=960
+tracker-height=544
+ll-lib-file=/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+ll-config-file=config_tracker_bytetrack.yml
+gpu-id=0
+enable-batch-process=1
+display-tracking-id=1
+
+# ============================================================================
+# SGIE 0: ResNet-50 Color Classifier (runs on vehicle crops only)
+# ============================================================================
+[secondary-gie0]
+enable=1
+gpu-id=0
+batch-size=16
+gie-unique-id=2
+operate-on-gie-id=1  # Operates on PGIE outputs
+operate-on-class-ids=2;3;5;7  # car, truck, bus, motorcycle
+config-file=config_sgie_color_resnet50.txt
+nvbuf-memory-type=0
+
+# ============================================================================
+# SGIE 1: YOLOv10-N License Plate Detector (runs on vehicle crops)
+# ============================================================================
+[secondary-gie1]
+enable=1
+gpu-id=0
+batch-size=16
+gie-unique-id=3
+operate-on-gie-id=1  # Operates on PGIE outputs
+operate-on-class-ids=2;3;5;7
+config-file=config_sgie_yolo_lpd.txt
+nvbuf-memory-type=0
+
+# ============================================================================
+# SGIE 2: LPRNet OCR (runs on license plate crops from SGIE1)
+# ============================================================================
+[secondary-gie2]
+enable=1
+gpu-id=0
+batch-size=16
+gie-unique-id=4
+operate-on-gie-id=3  # Operates on SGIE1 (plate detector) outputs
+config-file=config_sgie_lprnet_ocr.txt
+nvbuf-memory-type=0
+
+# ============================================================================
+# MESSAGE CONVERTER: Formats metadata to JSON schema
+# ============================================================================
+[msgconv]
+enable=1
+msg2p-lib=/opt/nvidia/deepstream/deepstream/lib/libnvds_msgconv.so
+config=msgconv_config.txt
+payload-type=0  # 0=Custom JSON
+msg2p-newapi=0
+frame-interval=0
+
+# ============================================================================
+# MESSAGE BROKER: Publishes to RabbitMQ asynchronously
+# ============================================================================
+[msgbroker]
+enable=1
+proto-lib=/opt/nvidia/deepstream/deepstream/lib/libnvds_amqp_proto.so
+conn-str=hostname;5672;guest;guest  # RabbitMQ: host;port;user;password
+topic=vehicle_sightings
+config=msgbroker_config.txt
+# Async mode to prevent pipeline blocking
+msg-broker-buffer-max-size=10000
+msg-broker-skip-msg-drop-error=1
+
+# ============================================================================
+# OSD: On-Screen Display (optional, for debugging)
+# ============================================================================
+[osd]
+enable=1
+gpu-id=0
+border-width=2
+text-size=12
+text-color=1;1;1;1
+text-bg-color=0.3;0.3;0.3;1
+font=Arial
+show-clock=1
+clock-x-offset=800
+clock-y-offset=820
+clock-text-size=12
+clock-color=1;0;0;1
+nvbuf-memory-type=0
+
+# ============================================================================
+# SINK: Output (fakesink for headless, or nveglglessink for display)
+# ============================================================================
+[sink0]
+enable=1
+type=1  # 1=Fakesink (headless), 2=EGLSink (display), 4=RTSP out
+sync=0  # Async for performance
+
+# ============================================================================
+# TILED DISPLAY: Not needed for single stream, but available
+# ============================================================================
+[tiled-display]
+enable=0
+rows=1
+columns=1
+width=1920
+height=1080
+gpu-id=0
+nvbuf-memory-type=0
+
+# ============================================================================
+# TESTS: Performance monitoring
+# ============================================================================
+[tests]
+file-loop=0  # Set to 1 to loop video file
